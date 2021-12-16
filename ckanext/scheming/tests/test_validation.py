@@ -71,7 +71,7 @@ class TestChoices(object):
     def test_choice_field_accepts_empty_choice(self):
         lc = LocalCKAN()
         d  = lc.action.package_create(
-            type="test-schema", name="fred_choices3": category=""
+            type="test-schema", name="fred_choices3", category=""
         )
 
         assert d['category'] == ""
