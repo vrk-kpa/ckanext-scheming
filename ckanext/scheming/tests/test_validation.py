@@ -68,6 +68,13 @@ class TestChoices(object):
         )
         assert d["category"] == "f2hybrid"
 
+    def test_choice_field_accepts_empty_choice(self):
+        lc = LocalCKAN()
+        d  = lc.action.package_create(
+            type="test-schema", name="fred_choices3": category=""
+        )
+
+        assert d['category'] == ""
 
 class TestRequired(object):
     def test_required_is_set_to_true(self):
