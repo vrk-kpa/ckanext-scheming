@@ -2,7 +2,12 @@ import six
 import pytest
 import bs4
 from ckan.lib.base import render_snippet
-from jinja2 import Markup
+try:
+    from jinja2.utils import markupsafe
+    Markup = markupsafe.Markup
+except ImportError:
+    # old way
+    from jinja2 import Markup
 
 import ckantoolkit
 
@@ -278,3 +283,32 @@ class TestRepeatingSubfieldsFormSnippet(object):
         snippet = bs4.BeautifulSoup(html)
         attr_holder = snippet.select_one(".controls").div
         assert attr_holder['data-module'] == 'test-attrs'
+
+
+@pytest.mark.usefixtures("with_request_context")
+class TestRadioFormSnippet(object):
+    def test_radio_choices(self):
+        html = render_form_snippet(
+            "radio.html",
+            field_name="radio-group",
+            choices=[
+                {"value": "one", "label": "One"}
+            ],
+        )
+        snippet = bs4.BeautifulSoup(html)
+        attr_holder = snippet.select_one(".controls").label
+        assert attr_holder.text.strip() == 'One' \
+            and attr_holder.input["value"].strip() == 'one'
+
+    def test_radio_checked(self):
+        html = render_form_snippet(
+            "radio.html",
+            field_name="radio-group",
+            data={"radio-group": "one"},
+            choices=[
+                {"value": "one", "label": "One"}
+            ],
+        )
+        snippet = bs4.BeautifulSoup(html)
+        attr_holder = snippet.select_one(".controls").input
+        assert attr_holder.has_attr('checked')

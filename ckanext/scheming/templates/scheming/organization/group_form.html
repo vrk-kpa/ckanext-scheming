@@ -12,11 +12,12 @@
 {%- endif -%}
 
 <form class="dataset-form form-horizontal" method="post" data-module="basic-form" enctype="multipart/form-data">
-  {% block error_summary %}
-    {{ form.errors(error_summary) }}
-  {% endblock %}
+    {% block error_summary %}
+      {{ form.errors(error_summary) }}
+    {% endblock %}
 
-  {%- set schema = h.scheming_get_organization_schema(group_type) -%}
+    {%- set schema = h.scheming_get_organization_schema(group_type) -%}
+    {{ h.csrf_input() if 'csrf_input' in h }}
     {%- for field in schema['fields'] -%}
         {%- if field.form_snippet is not none -%}
           {%- snippet 'scheming/snippets/form_field.html',
