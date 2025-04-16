@@ -5,8 +5,12 @@
 {% if not date is string and not time is string %}
     {% set date = data.get(field.field_name) %}
 
-    {% if date %}
+    {% if date and ' ' in date %}
         {% set parts = data.get(field.field_name).split() %}
+        {% set date = parts[0] %}
+        {% set time = parts[1] %}
+    {% else %}
+        {% set parts = data.get(field.field_name).split('T') %}
         {% set date = parts[0] %}
         {% set time = parts[1] %}
     {% endif %}
