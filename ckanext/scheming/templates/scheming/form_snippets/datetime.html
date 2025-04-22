@@ -6,13 +6,15 @@
     {% set date = data.get(field.field_name) %}
 
     {% if date and ' ' in date %}
-        {% set parts = data.get(field.field_name).split() %}
+        {% set parts = date.split() %}
+        {% set date = parts[0] %}
+        {% set time = parts[1] %}
+    {% elif date and 'T' in date %}
+        {% set parts = date.split('T') %}
         {% set date = parts[0] %}
         {% set time = parts[1] %}
     {% else %}
-        {% set parts = data.get(field.field_name).split('T') %}
-        {% set date = parts[0] %}
-        {% set time = parts[1] %}
+        {% set time = '' %}
     {% endif %}
 {% endif %}
 {% call form.input(
