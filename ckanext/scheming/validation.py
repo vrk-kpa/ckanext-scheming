@@ -1,3 +1,4 @@
+import ast
 import json
 import datetime
 from collections import defaultdict
@@ -8,13 +9,13 @@ import six
 
 import ckan.lib.helpers as h
 from ckan.lib.navl.dictization_functions import convert
-from ckantoolkit import (
+from ckan.plugins.toolkit import (
     get_validator,
     UnknownValidator,
     missing,
     Invalid,
     StopOnError,
-    _
+    _,
 )
 
 import ckanext.scheming.helpers as sh
@@ -23,6 +24,7 @@ from ckanext.scheming.errors import SchemingException
 OneOf = get_validator('OneOf')
 ignore_missing = get_validator('ignore_missing')
 not_empty = get_validator('not_empty')
+unicode_safe = get_validator('unicode_safe')
 
 all_validators = {}
 
@@ -46,93 +48,15 @@ def scheming_validator(fn):
     return fn
 
 
-@scheming_validator
+register_validator(unicode_safe)
+
+
 @register_validator
-def scheming_subfields(field, schema):
-    """
-    A special validator used to collect and pack subfields.
-    """
-    from ckanext.scheming.plugins import _field_create_validators
-
-    def subfields_validator(key, data, errors, context):
-        # If the field is coming from the API the value will be set directly.
-        value = data.get(key)
-        if not value:
-            # ... otherwise, it's a form submission so our values are stuck
-            # unrolled in __extras.
-            # If we're working on a package field, the key will look like:
-            #   (<field name>,)
-            # and if we're working on a resource it'll be:
-            #   ('resources', <resource #>, <field name>)
-            _junk = data.get(key[:-1] + ('__junk',), {})
-
-            # Group our unrolled fields by their index.
-            values = defaultdict(dict)
-            for k in _junk.keys():
-                if k[0] == key[0]:
-                    name = k[2]
-                    index = k[1]
-                    # Always pop, we don't want handled values to remain in
-                    # __extras or they'll end up on the model.
-                    values[index][name] = _junk.pop(k)
-
-            # ... then turn it back into an ordered list.
-            value = [v for k, v in sorted(values.items())]
-        elif isinstance(value, six.string_types):
-            value = json.loads(value)
-
-        if not isinstance(value, list):
-            # We treat all subfields as repeatable when processing, even
-            # when they aren't defined that way in the schema.
-            value = [value]
-
-        for subfield in field.get('repeating_subfields', field.get('simple_subfields')):
-            validators = _field_create_validators(subfield, schema, False)
-            for entry in value:
-                # This right here is why we recommend globally unique field
-                # names, else you risk trampling values from the top-level
-                # schema. Some validators like require_when_published require
-                # other top-level fields.
-                entry_as_data = {(k,): v for k, v in entry.items()}
-                entry_as_data.update(data)
-
-                entry_errors = defaultdict(list)
-
-                for v in validators:
-                    convert(
-                        v,
-                        (subfield['field_name'],),
-                        entry_as_data,
-                        entry_errors,
-                        context
-                    )
-
-                # Any subfield errors should be added as errors to the parent
-                # since this is the only way we have to let other plugins know
-                # of issues.
-                errors[key].extend(
-                    itertools.chain.from_iterable(
-                        v for v in entry_errors.itervalues()
-                    )
-                )
-
-                # Pull our potentially modified fields back. What if validators
-                # modified other fields such as a top-level field? Is this
-                # "allowed" in CKAN validators? We might have to replace
-                # entry_as_data with a write-tracing dict to capture all
-                # changes.
-                for k in entry.keys():
-                    entry[k] = entry_as_data[(k,)]
-
-        # It would be preferable to just always store as a list, but some plugins
-        # such as ckanext-restricted make assumptions on how values are stored.
-
-        if 'repeating_subfields' in field:
-            data[key] = json.dumps(value)
-        elif value:
-            data[key] = json.dumps(value[0])
-
-    return subfields_validator
+def strip_value(value):
+    '''
+    **starting from CKAN 2.10 this is included in CKAN core**
+    '''
+    return value.strip()
 
 
 @scheming_validator
@@ -141,6 +65,7 @@ def scheming_choices(field, schema):
     """
     Require that one of the field choices values is passed.
     """
+    OneOf = get_validator('OneOf')
     if 'choices' in field:
         return OneOf([c['value'] for c in field['choices']])
 
@@ -160,11 +85,27 @@ def scheming_choices(field, schema):
 @register_validator
 def scheming_required(field, schema):
     """
-    not_empty if field['required'] else ignore_missing
+    return a validator based on field['required']
+    and schema['draft_fields_required'] setting
     """
-    if field.get('required'):
-        return not_empty
-    return ignore_missing
+    if not field.get('required'):
+        return get_validator('ignore_missing')
+    if not schema.get('draft_fields_required', True):
+        return get_validator('scheming_draft_fields_not_required')
+    return get_validator('not_empty')
+
+
+@register_validator
+def scheming_draft_fields_not_required(key, data, errors, context):
+    """
+    call ignore_missing if state is draft, otherwise not_empty
+    """
+    state = data.get(('state',), missing)
+    if state is missing or state.startswith('draft'):
+        v = get_validator('ignore_missing')
+    else:
+        v = get_validator('not_empty')
+    v(key, data, errors, context)
 
 
 @scheming_validator
@@ -225,7 +166,10 @@ def scheming_multiple_choice(field, schema):
                 if v in selected
             ])
 
-            if field.get('required') and not selected:
+            state = data.get(('state',), missing)
+            really_required = schema.get('draft_fields_required', True
+                ) or not (state is missing or state.startswith('draft'))
+            if not selected and field.get('required') and really_required:
                 errors[key].append(_('Select at least one'))
 
     return validator
@@ -331,14 +275,36 @@ def scheming_isodatetime_tz(field, schema):
                 except (TypeError, ValueError):
                     raise Invalid(_('Date format incorrect'))
         else:
-            extras = data.get(('__extras',))
-            if not extras or (key[0] + '_date' not in extras and
-                              key[0] + '_time' not in extras):
+            if 'resources' in key and len(key) > 1:
+                # when a resource is edited, extras will be under a different key in the data
+                extras = data.get((('resources', key[1], '__extras')))
+                # the key for the current field also looks different for a resource,
+                # for example, a dataset might have the key ('start_timestamp')
+                # for a resource this might look like ('resources', 3, 'start_timestamp')
+                # however, we need to pass on a tuple with just the field name
+                field_name_index_in_key = 2
+
+            else:
+                extras = data.get(('__extras',))
+                field_name_index_in_key = 0
+
+            if not extras or (
+                (
+                    key[field_name_index_in_key] + '_date' not in extras
+                    and key[field_name_index_in_key] + '_time' not in extras
+                )
+            ):
                 if field.get('required'):
                     not_empty(key, data, errors, context)
             else:
                 date = validate_date_inputs(
-                    field, key, data, extras, errors, context)
+                    field=field,
+                    key=(key[field_name_index_in_key],),
+                    data=data,
+                    extras=extras,
+                    errors=errors,
+                    context=context,
+                )
                 if isinstance(date, datetime.datetime):
                     date = sh.scheming_datetime_to_utc(date)
 
@@ -409,16 +375,26 @@ def validators_from_string(s, field, schema):
     """
     convert a schema validators string to a list of validators
 
-    e.g. "if_empty_same_as(name) unicode" becomes:
-    [if_empty_same_as("name"), unicode]
+    e.g. "if_empty_same_as(name) unicode_safe" becomes:
+    [if_empty_same_as("name"), unicode_safe]
     """
     out = []
     parts = s.split()
     for p in parts:
         if '(' in p and p[-1] == ')':
             name, args = p.split('(', 1)
-            args = args[:-1].split(',')  # trim trailing ')', break up
-            v = get_validator_or_converter(name)(*args)
+            args = args[:-1]  # trim trailing ')'
+            try:
+                parsed_args = ast.literal_eval(args)
+                if not isinstance(parsed_args, tuple) or not parsed_args:
+                    # it's a signle argument. `not parsed_args` means that this single
+                    # argument is an empty tuple, for example: "default(())"
+                    parsed_args = (parsed_args,)
+
+            except (ValueError, TypeError, SyntaxError, MemoryError):
+                parsed_args = args.split(',')
+
+            v = get_validator_or_converter(name)(*parsed_args)
         else:
             v = get_validator_or_converter(p)
         if getattr(v, 'is_a_scheming_validator', False):
@@ -538,9 +514,11 @@ def scheming_multiple_text(field, schema):
 
             data[key] = json.dumps(out)
 
-        if (data[key] is missing or data[key] == '[]') and field.get('required'):
-            errors[key].append(_('Missing value'))
-            raise StopOnError
+        if (data[key] is missing or data[key] == '[]'):
+            if field.get('required'):
+                errors[key].append(_('Missing value'))
+                raise StopOnError
+            data[key] = '[]'
 
     return _scheming_multiple_text
 
