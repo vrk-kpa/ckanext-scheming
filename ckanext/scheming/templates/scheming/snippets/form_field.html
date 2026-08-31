@@ -15,13 +15,14 @@
     {%- set form_snippet = 'scheming/form_snippets/' + form_snippet -%}
   {%- endif -%}
 
-  {%- snippet form_snippet,
-    field=field,
-    data=data,
-    errors=errors,
-    licenses=licenses,
-    entity_type=entity_type,
-    object_type=object_type
-  -%}
+{%- snippet form_snippet,
+  field=field,
+  data=data,
+  errors=errors,
+  licenses=licenses,
+  entity_type=entity_type,
+  object_type=object_type,
+  package_id=package_id
+-%}
 
 {%- endif -%}

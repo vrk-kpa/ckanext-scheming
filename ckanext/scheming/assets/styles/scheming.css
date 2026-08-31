@@ -31,3 +31,31 @@ a.btn.btn-multiple-remove {
   border-radius: 100px;
 }
 
+/* remove ":" after form label */
+.radio-group label::after {
+  content: none;
+}
+
+.radio-group label {
+  font-weight: normal;
+}
+
+fieldset.checkboxes label {
+  font-weight: normal;
+  display: block;
+}
+fieldset.checkboxes label:after {
+  content: none;
+}
+fieldset.checkboxes label input {
+  width: auto;
+  top: 0;
+}
+
+.scheming-pages-dynamic-width{
+  width: attr(data-width, 100)%;
+}
+
+.d-none-soft{
+  display: none;
+}
